@@ -1,0 +1,34 @@
+[project]
+name = "jet-growth-agent"
+version = "0.1.0"
+description = "Growth manager agent for JET restaurant partners (hackathon)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "duckdb>=1.1",
+    "jsonpatch>=1.33",
+    "langgraph>=0.2",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pydantic>=2.8",
+    "streamlit>=1.40",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["growth"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
