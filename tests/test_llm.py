@@ -1,9 +1,7 @@
-"""llm.call_structured() contract, with a fake Anthropic client (no network, no key)."""
+"""llm.call_structured() contract with a fake LiteLLM completion (no network, no key)."""
 
 from types import SimpleNamespace
 
-import anthropic
-import httpx2
 from pydantic import BaseModel
 
 from growth import llm
@@ -14,50 +12,59 @@ class Tag(BaseModel):
     severity: int
 
 
-def _tool_reply(payload: dict, block_id: str = "tu_1"):
-    block = SimpleNamespace(type="tool_use", id=block_id, name=llm.TOOL_NAME, input=payload)
-    return SimpleNamespace(content=[block], stop_reason="tool_use")
+def _reply(content: str):
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
-class FakeClient:
-    def __init__(self, replies):
-        self.replies = list(replies)
-        self.calls: list[dict] = []
-        self.messages = SimpleNamespace(create=self._create)
+def _fake(*replies):
+    calls = []
 
-    def _create(self, **kwargs):
-        self.calls.append(kwargs)
-        reply = self.replies.pop(0)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
+    def completion(**kwargs):
+        calls.append(kwargs)
+        r = replies[len(calls) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return _reply(r)
 
-
-def test_valid_first_try():
-    fake = FakeClient([_tool_reply({"theme": "soggy", "severity": 3})])
-    assert llm.call_structured(Tag, "sys", "user", llm=fake) == Tag(theme="soggy", severity=3)
-    call = fake.calls[0]
-    assert call["tool_choice"] == {"type": "auto"}  # forced tool choice is rejected by current models
-    assert call["tools"][0]["name"] == llm.TOOL_NAME
+    return completion, calls
 
 
-def test_retries_once_with_validation_error_fed_back():
-    fake = FakeClient([_tool_reply({"theme": "soggy"}), _tool_reply({"theme": "soggy", "severity": 1}, "tu_2")])
-    assert llm.call_structured(Tag, "s", "u", llm=fake).severity == 1
-    feedback = fake.calls[1]["messages"][-1]["content"][0]
-    assert feedback["type"] == "tool_result" and feedback["is_error"]
+def test_valid_first_try_uses_schema_mode():
+    fake, calls = _fake('{"theme": "soggy", "severity": 3}')
+    assert llm.call_structured(Tag, "sys", "user", completion=fake) == Tag(theme="soggy", severity=3)
+    assert calls[0]["response_format"] is Tag
+    assert calls[0]["model"] == llm.model_name()
+
+
+def test_fenced_json_is_accepted():
+    fake, _ = _fake('Sure!\n```json\n{"theme": "cold", "severity": 2}\n```')
+    assert llm.call_structured(Tag, "s", "u", completion=fake).theme == "cold"
+
+
+def test_retries_once_with_error_fed_back():
+    fake, calls = _fake('{"theme": "soggy"}', '{"theme": "soggy", "severity": 1}')
+    assert llm.call_structured(Tag, "s", "u", completion=fake).severity == 1
+    assert "Validation failed" in calls[1]["messages"][-1]["content"]
+    assert "response_format" not in calls[1]
 
 
 def test_gives_up_after_two_invalid_attempts():
-    fake = FakeClient([_tool_reply({"x": 1}), _tool_reply({"y": 2}, "tu_2")])
-    assert llm.call_structured(Tag, "s", "u", llm=fake) is None
+    fake, calls = _fake("nope", "still nope")
+    assert llm.call_structured(Tag, "s", "u", completion=fake) is None
+    assert len(calls) == 2
 
 
-def test_api_error_returns_none_instead_of_raising():
-    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
-    err = anthropic.APIConnectionError(request=request)
-    assert llm.call_structured(Tag, "s", "u", llm=FakeClient([err])) is None
+def test_call_failure_returns_none():
+    fake, _ = _fake(RuntimeError("AuthenticationError: no key"))
+    assert llm.call_structured(Tag, "s", "u", completion=fake) is None
 
 
-def test_missing_credentials_returns_none():
-    assert llm.call_structured(Tag, "s", "u", llm=FakeClient([TypeError("no auth")])) is None
+def test_default_model_follows_available_key(monkeypatch):
+    monkeypatch.delenv("MODEL_MAIN", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    assert llm.model_name() == llm.OPENAI_DEFAULT
+    monkeypatch.delenv("OPENAI_API_KEY")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "y")
+    assert llm.model_name() == llm.ANTHROPIC_DEFAULT
+    monkeypatch.setenv("MODEL_MAIN", "openai/other")
+    assert llm.model_name() == "openai/other"

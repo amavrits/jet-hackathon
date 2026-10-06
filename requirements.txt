@@ -1,5 +1,5 @@
 # Core
-anthropic==1.11.0
+litellm==1.104.0
 typesafe-sdk==0.7.2
 langgraph==1.2.13
 langgraph-checkpoint==4.2.0

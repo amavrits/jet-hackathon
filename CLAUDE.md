@@ -17,7 +17,8 @@ Do not build anything the demo doesn't show.
 ## Stack
 - Python 3.11+, `pip` + `venv` for env and deps (`requirements.txt`)
 - LangGraph for orchestration
-- Anthropic SDK for text generation (`growth/llm.py` is the only module that imports it)
+- LiteLLM for text generation (`growth/llm.py` and `growth/chat.py` are the only modules that
+  import it). The model name picks the provider.
 - TypeSafe Jev for classification (`growth/classify.py` is the only module that imports
   `typesafe_sdk`). Jev returns typed answers with calibrated confidence, never text. Use it
   for per-item labelling (review tags, yes/no checks). Keep each state short, one item per
@@ -25,10 +26,11 @@ Do not build anything the demo doesn't show.
 - Pydantic v2 for all state and LLM outputs (structured output, no free-text parsing)
 - DuckDB for data (single file `data/jet.duckdb`)
 - Streamlit for the demo UI
-- Env, loaded with python-dotenv. Never read or print the env file. `ANTHROPIC_API_KEY`,
-  `MODEL_MAIN` (default `claude-sonnet-5-5`), `MODEL_FAST` (default `claude-haiku-4-5-20251001`),
-  `JEV_API_KEY` and optional `JEV_MODEL` (default `jev-latest`). See `.env.example`.
-  Jev answers are cached in `data/cache/jev.json` (gitignored); delete it to force fresh calls.
+- Env, loaded with python-dotenv. Never read or print the env file. `OPENAI_API_KEY` and/or
+  `ANTHROPIC_API_KEY`. `MODEL_MAIN` / `MODEL_FAST` in LiteLLM form; the default follows the key
+  present (`openai/gpt-6-luna`, else `anthropic/claude-sonnet-5-5`). `JEV_API_KEY`, optional
+  `JEV_MODEL` (default `jev-latest`). Jev answers are cached in `data/cache/jev.json`
+  (gitignored); delete it to force fresh calls.
 
 ## Commands
 ```bash
@@ -56,8 +58,9 @@ growth/
     promo_ads.py      # dead-slot promos + moving sponsored budget out of the dinner peak
     impact.py         # one formula per rec kind; all assumptions are constants at the top
     common.py         # shared facts (basket, volume, commission) and helpers
-  llm.py              # call_structured() -> Pydantic via tool use, retry once, else None
+  llm.py              # call_structured() -> Pydantic via LiteLLM JSON mode, retry once, else None
   classify.py         # Jev wrapper: ask_many([(state, questions)]) -> answers, disk-cached
+  chat.py             # owner Q&A about the cards: streamed, read-only tools, number check
   tools/listing.py    # read/apply patches to the mock listing store
 app/main.py           # Streamlit UI
 runners/
@@ -99,6 +102,14 @@ load_context -> [reviews, menu, pricing, promo_ads] (parallel)
 - `human_approval` uses LangGraph `interrupt`. Nothing is written without approval.
 - `apply` writes JSON patches to `listings` and logs to `change_log`. It is reversible.
 
+## Chat
+`growth/chat.py` explains the cards while the graph is paused. The app calls
+`answer_for_thread(graph, config, question, history, focus_id=card_id)` and consumes events:
+`text` (stream it), `tool` (show "looking up…"), `done` (store `history` unchanged, flag
+`unverified_numbers`), `error`. The model only gets read-only tools that wrap `queries.py`
+functions; it never writes SQL and cannot change the listing. Every number in an answer is
+checked against the cards and tool results.
+
 ## Recommendation contract
 Every recommendation is a Pydantic model with:
 `id, agent, title, rationale, evidence (list of data refs: review ids, order stats),
@@ -119,10 +130,9 @@ never from the LLM inventing figures. Show the formula in the UI.
 ## Conventions
 - Prompts live next to their agent as module-level constants. Keep them short.
 - Use `llm.call_structured(Schema, system, user)` to get Pydantic models back. It retries
-  once on validation error and returns None on failure (including API errors and a missing
-  key); the caller falls back or skips and logs. Don't force `tool_choice`: current models
-  reject it with a 400.
-- No network calls besides the Anthropic API and TypeSafe. No scraping during the demo.
+  once on validation error and returns None on any failure (including a missing key); the
+  caller falls back or skips and logs.
+- No network calls besides the LLM provider (via LiteLLM) and TypeSafe. No scraping during the demo.
 - Type hints everywhere. Small functions. No classes where a function will do.
 - Tests: one per agent on a fixture restaurant, asserting the planted problem is found.
 

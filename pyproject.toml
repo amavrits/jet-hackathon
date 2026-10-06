@@ -8,3 +8,8 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["live: calls a real external API; skipped when its key is missing"]
+filterwarnings = [
+    # LiteLLM internals, harmless: its usage object and a TypedDict qualifier trip Pydantic warnings
+    "ignore:Pydantic serializer warnings:UserWarning",
+    "ignore:Item 'summary' on TypedDict:UserWarning",
+]

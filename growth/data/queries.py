@@ -508,3 +508,36 @@ def current_levers(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> dict[s
 def total_item_revenue(con: duckdb.DuckDBPyConnection, restaurant_id: str, weeks: int = 8) -> float:
     """Item revenue over the last N weeks, the weight base for price-index changes."""
     return float(sum(float(s["revenue_eur"]) for s in item_sales(con, restaurant_id, weeks)))
+
+
+def dish_reviews(
+    con: duckdb.DuckDBPyConnection, restaurant_id: str, menu_item_id: str, max_rating: int = 5, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Reviews of orders that contained the dish, lowest rating first, then newest."""
+    return _rows(
+        con,
+        """
+        SELECT DISTINCT r.review_id, r.rating, r.text, r.created_at
+        FROM reviews r JOIN orders o USING (order_id)
+        WHERE r.restaurant_id = ? AND o.menu_item_id = ? AND r.rating <= ?
+        ORDER BY r.rating, r.created_at DESC
+        LIMIT ?
+        """,
+        [restaurant_id, menu_item_id, max_rating, limit],
+    )
+
+
+def competitor_prices_for_dish(
+    con: duckdb.DuckDBPyConnection, restaurant_id: str, dish_name: str
+) -> list[dict[str, Any]]:
+    """Each nearby competitor's price for the same dish name, nearest first."""
+    return _rows(
+        con,
+        """
+        SELECT c.name AS competitor, c.distance_km, c.rating, ci.price_eur
+        FROM competitors c JOIN competitor_menu_items ci USING (competitor_id)
+        WHERE c.restaurant_id = ? AND ci.name = ?
+        ORDER BY c.distance_km
+        """,
+        [restaurant_id, dish_name],
+    )
