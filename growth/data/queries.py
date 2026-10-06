@@ -137,6 +137,47 @@ CREATE TABLE IF NOT EXISTS change_events (
     after_value     DOUBLE
 );
 
+-- One stored analysis run per restaurant: the agents' cards plus two independent selections,
+-- the optimiser's (numeric, owner never loses) and Jev's (judgment on the same numbers).
+CREATE TABLE IF NOT EXISTS analyses (
+    analysis_id             VARCHAR PRIMARY KEY,
+    restaurant_id           VARCHAR NOT NULL,
+    created_at              TIMESTAMP NOT NULL,
+    llm_model               VARCHAR,
+    jev_model               VARCHAR,
+    n_recommendations       INTEGER NOT NULL,
+    n_jev_selected          INTEGER NOT NULL,
+    n_optimizer_selected    INTEGER NOT NULL,
+    n_agree                 INTEGER NOT NULL,       -- cards where Jev and the optimiser made the same call
+    plan_jet_revenue_eur_per_week DOUBLE,           -- optimiser's plan, re-scored jointly
+    plan                    JSON,                   -- optimiser's chosen options, incl. ad-grid options
+    errors                  JSON
+);
+
+CREATE TABLE IF NOT EXISTS analysis_recommendations (
+    analysis_id             VARCHAR NOT NULL,
+    recommendation_id       VARCHAR NOT NULL,
+    restaurant_id           VARCHAR NOT NULL,
+    agent                   VARCHAR NOT NULL,
+    kind                    VARCHAR NOT NULL,
+    title                   VARCHAR NOT NULL,
+    variant_group           VARCHAR,                -- alternatives share a group; at most one is chosen
+    variant_label           VARCHAR,
+    confidence              VARCHAR NOT NULL,
+    shown_rank              INTEGER,                -- position on the owner's screen; NULL = hidden variant
+    value_source            VARCHAR NOT NULL,       -- 'model' (learned effects) | 'heuristic' (impact.py)
+    jet_revenue_eur_per_week   DOUBLE,
+    owner_profit_eur_per_week  DOUBLE,
+    owner_profit_lo         DOUBLE,                 -- 90% lower bound; heuristic values have none
+    partner_cost_eur_per_week  DOUBLE,
+    optimizer_selected      BOOLEAN NOT NULL,
+    jev_selected            BOOLEAN NOT NULL,
+    jev_probability         DOUBLE,                 -- Jev's probability for this card/option
+    jev_question            VARCHAR NOT NULL,       -- 'choice' (pick one of a group) | 'noul' (propose: yes/no)
+    recommendation          JSON NOT NULL,          -- the full card
+    PRIMARY KEY (analysis_id, recommendation_id)
+);
+
 -- Every approved patch applied to a listing. Reversible via `reverted_at`.
 CREATE TABLE IF NOT EXISTS change_log (
     change_id       VARCHAR PRIMARY KEY,

@@ -37,6 +37,7 @@ Do not build anything the demo doesn't show.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt         # install
 python -m runners.generate_data         # build data/jet.duckdb from the true model (~5 s)
+python -m runners.analyse_restaurants   # store an analysis per partner, with optimiser + Jev picks (~30 s)
 python -m growth.cli <rest_id>          # run graph headless, print recommendations
 python -m servers.impact_mcp --transport http --port 8765     # peers, effects, predict_impact
 python -m servers.optimizer_mcp --transport http --port 8766  # optimize_plan, optimize_portfolio
@@ -64,6 +65,7 @@ growth/
   llm.py              # call_structured() -> Pydantic via LiteLLM JSON mode, retry once, else None
   classify.py         # Jev wrapper: ask_many([(state, questions)]) -> answers, disk-cached
   chat.py             # owner Q&A about the cards: streamed, read-only tools, number check
+  analyses.py         # stored analyses: optimiser vs Jev selection per card
   tools/listing.py    # read/apply patches to the mock listing store
   ml/
     peers.py          # kNN peers (distance, cuisine, price level, size, rating), benchmark, k-means segments
@@ -89,6 +91,10 @@ marks the 8 demo partners, which alone have item-level orders, reviews, menus an
 `restaurant_weeks` is a 26-week panel for every restaurant (orders, GMV, levers such as
 photo_share, price_index, promo, ad budget); `change_events` logs past changes. Competitors of
 a partner are its 5 nearest same-cuisine market restaurants.
+`analyses` + `analysis_recommendations` store analysis runs: every card (incl. hidden
+variants), its model or heuristic value, `optimizer_selected` (MILP, owner never loses) and
+`jev_selected` (Jev judgment on the same pre-computed numbers: one Choice per variant group,
+one Noul per standalone card, probabilities kept). Rebuilding the database empties them.
 **Ground truth rule:** `runners/true_model.py` and `data/true_model.json` hold the true
 effects. Nothing under `growth/` may import or read them; estimators must recover effects from
 the observable tables, and only tests compare against the truth.
