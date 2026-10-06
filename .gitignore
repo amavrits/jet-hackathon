@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+*.json
+*.csv
+*.png
+*.pdf
+*.db
+*.duckdb
+*.duckdb.wahl
+*.env
+.idea
+*.xml
+*.iml
+secrets/*.env
+!secrets/*.example
