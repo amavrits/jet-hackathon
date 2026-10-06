@@ -480,6 +480,70 @@ def sponsored_share_in_hours(con: duckdb.DuckDBPyConnection, restaurant_id: str,
     )[0]
 
 
+# ------------------------------------------------------------- market panel (growth.ml)
+
+
+def panel(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """Every restaurant-week with the restaurant's static attributes. Input to effect estimation."""
+    return _rows(
+        con,
+        """
+        SELECT w.*, r.city, r.cuisine, r.price_level, r.commission_rate, r.is_partner
+        FROM restaurant_weeks w JOIN restaurants r USING (restaurant_id)
+        ORDER BY w.restaurant_id, w.week_start
+        """,
+    )
+
+
+def restaurant_features(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
+    """One row per restaurant: location, cuisine, price level, size and lever levels. Input to peers."""
+    return _rows(
+        con,
+        """
+        SELECT r.restaurant_id, r.name, r.cuisine, r.city, r.lat, r.lon, r.price_level, r.rating,
+               r.delivery_model, r.commission_rate, r.is_partner,
+               MEDIAN(w.orders)             AS orders_per_week,
+               MEDIAN(w.avg_basket_eur)     AS avg_basket_eur,
+               AVG(w.photo_share)           AS photo_share,
+               AVG(w.description_share)     AS description_share,
+               arg_max(w.price_index, w.week_start) AS price_index,
+               AVG(w.ad_budget_eur)         AS ad_budget_eur,
+               MAX(w.ad_budget_eur) > 0     AS advertiser
+        FROM restaurants r JOIN restaurant_weeks w USING (restaurant_id)
+        GROUP BY ALL
+        ORDER BY r.restaurant_id
+        """,
+    )
+
+
+def latest_week(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> dict[str, Any] | None:
+    """The most recent panel row: current lever values and volume. Input to prediction."""
+    rows = _rows(
+        con,
+        """
+        SELECT w.*, r.name, r.city, r.cuisine, r.price_level, r.commission_rate, r.is_partner, r.rating AS rating_now
+        FROM restaurant_weeks w JOIN restaurants r USING (restaurant_id)
+        WHERE w.restaurant_id = ?
+        ORDER BY w.week_start DESC LIMIT 1
+        """,
+        [restaurant_id],
+    )
+    return rows[0] if rows else None
+
+
+def menu_size(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> int:
+    row = con.execute("SELECT COUNT(*) FROM menu_items WHERE restaurant_id = ?", [restaurant_id]).fetchone()
+    return int(row[0] or 0)
+
+
+def change_event_counts(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
+    """How many past changes of each type the market has. Evidence strength for each effect."""
+    return {
+        r["change_type"]: int(r["n"])
+        for r in _rows(con, "SELECT change_type, COUNT(*) AS n FROM change_events GROUP BY 1")
+    }
+
+
 def category_orders(con: duckdb.DuckDBPyConnection, restaurant_id: str, category: str, weeks: int = 8) -> int:
     """Distinct orders containing at least one dish from `category` in the last N weeks."""
     row = con.execute(
