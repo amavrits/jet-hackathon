@@ -10,6 +10,14 @@ approves.
 > written. The agents, the graph and the demo UI are still stubs. See
 > [Status](#status) for the exact split.
 
+> [!IMPORTANT]
+> **Auditable by design, not yet audited.** This repo contains part of an agent
+> that is designed to be auditable, and a written statement of what it should be
+> judged against ([`AUDIT-CRITERIA.md`](AUDIT-CRITERIA.md)). It has not been shown
+> to pass those criteria: none of them has been verified, the owner-approval and
+> change-log controls are not built yet, and the criteria themselves are a draft
+> that no audit function has reviewed. Do not describe this agent as audit-compliant.
+
 ## Where this fits in SAAF
 
 | | |
@@ -17,7 +25,7 @@ approves.
 | **Type** | Agent (autonomous, multi-step, with a human approval checkpoint) |
 | **Plan this implements** | _TODO: link to the plan in `SAAF-Project/SAAF-Project/plans/`_ |
 | **Where the code lives** | This repo: https://github.com/amavrits/jet-hackathon |
-| **Audit criteria** | _TODO: `AUDIT-CRITERIA.md` (required by SAAF, not written yet)_ |
+| **Audit criteria** | [`AUDIT-CRITERIA.md`](AUDIT-CRITERIA.md) (draft, nothing verified yet) |
 
 ## What the agent does
 
@@ -142,7 +150,7 @@ not real output, because the agents are not built yet:
 - **Done:** synthetic data and queries, core models, the Claude helper,
   `.env.example`.
 - **Not done:** all five agents, the graph, the listing tool, the CLI, the UI,
-  the test fixture, and `AUDIT-CRITERIA.md`.
+  and the test fixture.
 - **Not yet verified:** a real Claude call through `growth/llm.py`, and
   `GraphState` running inside LangGraph.
 
