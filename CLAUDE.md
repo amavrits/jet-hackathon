@@ -15,7 +15,7 @@ justified ad spend. If a recommendation can't state its expected impact, drop it
 Do not build anything the demo doesn't show.
 
 ## Stack
-- Python 3.12, `uv` for env and deps
+- Python 3.11+, `pip` + `venv` for env and deps (`requirements.txt`)
 - LangGraph for orchestration, Anthropic SDK for Claude
 - Pydantic v2 for all state and LLM outputs (structured output, no free-text parsing)
 - DuckDB for data (single file `data/jet.duckdb`)
@@ -25,12 +25,13 @@ Do not build anything the demo doesn't show.
 
 ## Commands
 ```bash
-uv sync                                 # install
-uv run python -m growth.data.seed       # generate synthetic data -> data/jet.duckdb
-uv run python -m growth.cli <rest_id>   # run graph headless, print recommendations
-uv run streamlit run app/main.py        # demo UI
-uv run pytest -q                        # tests
-uv run ruff check . && uv run ruff format .
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt         # install
+python -m growth.data.seed              # generate synthetic data -> data/jet.duckdb
+python -m growth.cli <rest_id>          # run graph headless, print recommendations
+streamlit run app/main.py               # demo UI
+pytest -q                               # tests
+ruff check . && ruff format .
 ```
 
 ## Layout
