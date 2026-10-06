@@ -1,7 +1,26 @@
 # ML design: true model, impact estimation, MCP server, optimisation
 
-Status: the true model and the data build are implemented. Estimation, the MCP server and the
-optimiser are designed here and not built yet.
+Status: all of this is built. `growth/ml/` holds peers, effects, predict and optimize;
+`servers/impact_mcp.py` and `servers/optimizer_mcp.py` expose them as two MCP servers (the
+design below describes one server; two keep "what will happen" and "what should we do" as
+separate tools for the agent). `tests/test_ml.py`, `tests/test_optimize.py` and `tests/test_mcp.py`
+cover recovery against the truth, the optimiser's constraints and both servers.
+
+Deviations from the design, found while building:
+- The ad off-peak boost (lambda) is not identified from this market: only 22 daypart changes,
+  most restaurants sit in a narrow 0.2-0.4 off-peak band, and weekly order noise is about twice
+  the ad signal. The fit returns lambda near 0 with a 90% interval reaching the bound of 3, so
+  `ad_daypart` cards carry a wide interval and the robust optimiser drops them. This is reported
+  as-is rather than regularised. Kappa is recovered within its interval.
+- Advertisers' organic level is calibrated on the level of orders in their ad-free weeks, not
+  the mean of log orders, which otherwise inflates the excess attributed to ads by a few orders
+  a week (Jensen gap).
+- Recommendations reach the model through `Recommendation.lever_changes` (the contract in
+  `growth/state.py`): the predictor reads the `after` values, and the optimiser treats a
+  `variant_group` (the 15/10/5% price-cut variants, the ad-budget variants) as one choice. The
+  only grid the optimiser adds itself is ad budget, since no agent proposes a fresh campaign.
+- Segments are k-means over the whole market (location, price level, size, rating, listing
+  quality, advertiser flag) and sit next to the kNN peers, not instead of them.
 
 ## 1. Why
 

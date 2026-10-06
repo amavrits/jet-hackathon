@@ -11,6 +11,7 @@ conservative and in one place.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from growth.state import Impact, Recommendation
 
@@ -135,5 +136,40 @@ def estimate(rec: Recommendation) -> Recommendation:
     return rec.model_copy(update={"impact": est(rec.facts)}) if est else rec
 
 
-def run(recs: list[Recommendation]) -> list[Recommendation]:
-    return [estimate(r) for r in recs]
+def estimate_learned(con: Any, restaurant_id: str, rec: Recommendation, effects: dict[str, Any]) -> Recommendation:
+    """Impact from the effects learned on the market panel (growth.ml). Kinds without a lever in
+    the panel (dish and delivery complaints, pruning) keep the heuristic above, marked as such."""
+    from growth.ml import predict as pr
+
+    changes = pr.changes_for_recommendation(rec)
+    if not changes:
+        r = estimate(rec)
+        if r.impact:
+            r.impact.formula = f"[heuristic] {r.impact.formula}"
+        return r
+    p = pr.predict_impact(con, restaurant_id, changes, effects=effects)
+    jet = p.jet_revenue_eur_per_week
+    evidence = ", ".join(f"{n} past {lever} changes" for lever, n in p.evidence.items() if n)
+    return rec.model_copy(
+        update={
+            "impact": Impact(
+                orders_per_week=p.orders_per_week.point,
+                gmv_eur_per_week=p.gmv_eur_per_week.point,
+                jet_revenue_eur_per_week=jet.point,
+                ad_spend_eur=p.ad_spend_eur_per_week,
+                formula=f"[learned] {p.formula} -> +{p.orders_per_week.point:.1f} orders/wk, "
+                f"€{jet.point:.0f}/wk for JET (90%: €{jet.lo:.0f} to €{jet.hi:.0f}); "
+                f"from {evidence or 'the market panel'}",
+            )
+        }
+    )
+
+
+def run(recs: list[Recommendation], con: Any = None, restaurant_id: str | None = None) -> list[Recommendation]:
+    """Heuristics by default. With a connection and restaurant id, use the learned effects."""
+    if con is None or restaurant_id is None:
+        return [estimate(r) for r in recs]
+    from growth.ml import effects as fx
+
+    effects = fx.load(con)
+    return [estimate_learned(con, restaurant_id, r, effects) for r in recs]

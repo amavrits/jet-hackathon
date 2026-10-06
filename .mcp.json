@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jet-impact": {
+      "command": ".venv/bin/python",
+      "args": ["-m", "servers.impact_mcp", "--transport", "stdio"]
+    },
+    "jet-optimizer": {
+      "command": ".venv/bin/python",
+      "args": ["-m", "servers.optimizer_mcp", "--transport", "stdio"]
+    }
+  }
+}

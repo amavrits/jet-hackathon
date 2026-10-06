@@ -38,6 +38,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt         # install
 python -m runners.generate_data         # build data/jet.duckdb from the true model (~5 s)
 python -m growth.cli <rest_id>          # run graph headless, print recommendations
+python -m servers.impact_mcp --transport http --port 8765     # peers, effects, predict_impact
+python -m servers.optimizer_mcp --transport http --port 8766  # optimize_plan, optimize_portfolio
+                                        # both default to --transport stdio; see .mcp.json
 streamlit run app/main.py               # demo UI
 pytest -q                               # tests; live API tests auto-skip without keys
 pytest -q -m live                       # only the live API tests
@@ -62,11 +65,21 @@ growth/
   classify.py         # Jev wrapper: ask_many([(state, questions)]) -> answers, disk-cached
   chat.py             # owner Q&A about the cards: streamed, read-only tools, number check
   tools/listing.py    # read/apply patches to the mock listing store
+  ml/
+    peers.py          # kNN peers (distance, cuisine, price level, size, rating), benchmark, k-means segments
+    effects.py        # two-way FE on the panel -> lever effects with bootstrap intervals, cached in data/models
+    predict.py        # predict_impact(restaurant, lever changes) -> weekly deltas with intervals + formula
+    optimize.py       # MILP over recommendations + price/ad grids; owner never loses; portfolio knapsack
+servers/
+  impact_mcp.py       # MCP "jet-impact": get_peers, get_benchmark, get_market_segments, get_effects, predict_impact
+  optimizer_mcp.py    # MCP "jet-optimizer": list_options, optimize_plan, optimize_portfolio
+  common.py           # shared db/effects access and --transport stdio|http flags
 app/main.py           # Streamlit UI
 runners/
   true_model.py       # TRUE demand model + market simulation. Ground truth, see below
   generate_data.py    # builds data/jet.duckdb and data/true_model.json
-docs/ml-design.md     # true model, impact estimation, MCP server, optimisation
+docs/ml-design.md     # true model, impact estimation, MCP servers, optimisation (with build notes)
+.mcp.json             # registers both servers for Claude Code over stdio
 tests/
 ```
 

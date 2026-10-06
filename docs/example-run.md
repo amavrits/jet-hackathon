@@ -106,15 +106,17 @@ graph.stream({"restaurant_id": "r_pho_house"}, config, stream_mode="updates")
 ## 4. Owner's decision
 
 ```python
-graph.invoke(Command(resume={
-    "approve": [
-        "menu-r_pho_house-descriptions",
-        "rev-r_pho_house-delivery"
-    ],
-    "reject": {
-        "pricing-r_pho_house-starters-w05": "We raised prices last month to cover rent. Not cutting this quarter."
-    }
-}), config)
+graph.invoke(
+    Command(
+        resume={
+            "approve": ["menu-r_pho_house-descriptions", "rev-r_pho_house-delivery"],
+            "reject": {
+                "pricing-r_pho_house-starters-w05": "We raised prices last month to cover rent. Not cutting this quarter."
+            },
+        }
+    ),
+    config,
+)
 ```
 
 ## 5. Result
