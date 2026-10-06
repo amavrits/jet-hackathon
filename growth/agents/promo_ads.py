@@ -15,7 +15,7 @@ import duckdb
 
 from growth.agents.common import WEEKDAYS, WEEKS, base_facts, eur
 from growth.data import queries as q
-from growth.state import Evidence, Recommendation
+from growth.state import EvidenceRef, LeverChange, Recommendation
 
 DAYPARTS: dict[str, range] = {"lunch": range(11, 14), "afternoon": range(14, 18), "dinner": range(18, 23)}
 PEAK_HOURS = [18, 19, 20, 21]
@@ -23,6 +23,8 @@ DEAD_SLOT_RATIO = 0.5
 PROMO_DISCOUNT = 0.15
 PROMO_MIN_BASKET_EUR = 15.0
 PEAK_SHARE_THRESHOLD = 0.5  # share of sponsored orders in peak hours that counts as "peak-heavy"
+# Ad variants: weekly budget as a multiple of today's, always scheduled off-peak.
+AD_BUDGET_MULTIPLIERS = (0.75, 1.0, 1.5)
 
 
 def find_slow_slots(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[dict]:
@@ -52,6 +54,7 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
     if q.get_restaurant(con, restaurant_id) is None:
         return []
     base = base_facts(con, restaurant_id)
+    levers = q.current_levers(con, restaurant_id)
     slow = find_slow_slots(con, restaurant_id)
     recs: list[Recommendation] = []
 
@@ -73,10 +76,16 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
                     f"in this slot only, for four weeks."
                 ),
                 evidence=[
-                    Evidence(kind="order_stat", ref=f"{day}_{s['daypart']}_orders_{WEEKS}w", value=float(s["orders"])),
-                    Evidence(
+                    EvidenceRef(
+                        kind="order_stat",
+                        ref=f"{day}_{s['daypart']}_orders_{WEEKS}w",
+                        detail=f"{label}: {s['orders']} orders in {WEEKS} weeks",
+                        value=float(s["orders"]),
+                    ),
+                    EvidenceRef(
                         kind="order_stat",
                         ref=f"other_days_{s['daypart']}_median_{WEEKS}w",
+                        detail=f"Same hours on other days: median {s['expected']:.0f} orders in {WEEKS} weeks",
                         value=float(s["expected"]),
                     ),
                 ],
@@ -100,6 +109,14 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
                         },
                     }
                 ],
+                lever_changes=[
+                    LeverChange(
+                        lever="promo_active",
+                        before=levers["promo_active"],
+                        after=round(min(1.0, s["expected"] / WEEKS / base["orders_per_week"]), 4),
+                        note="promo covers this slot only: its normal share of weekly orders",
+                    )
+                ],
                 confidence="high" if s["ratio"] < 0.4 else "med",
             )
         )
@@ -122,37 +139,72 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
             else [{"day": d, "start": "14:00", "end": "18:00"} for d in WEEKDAYS[:5]]
         )
         target = ", ".join(f"{x['day'].capitalize()} {x['start']}-{x['end']}" for x in schedule)
-        recs.append(
-            Recommendation(
-                id=f"ads-{restaurant_id}-{c['campaign_id']}-daypart",
-                agent="promo_ads",
-                kind="ad_daypart",
-                title="Move sponsored listing budget out of the dinner peak",
-                rationale=(
-                    f"{peak_share:.0%} of sponsored orders arrive between 18:00 and 22:00, when the restaurant is "
-                    f"already at its busiest and most of those customers would likely have ordered anyway. "
-                    f"Each sponsored order costs about {eur(cpo)}."
-                ),
-                action=f"Keep the {eur(weekly_budget)}/week budget but only run the sponsored listing in: {target}.",
-                evidence=[
-                    Evidence(
-                        kind="campaign",
-                        ref=c["campaign_id"],
-                        note=f"{eur(weekly_budget)}/week, {c['attributed_orders']} attributed orders",
-                        value=weekly_budget,
+        group = f"ads-{restaurant_id}-{c['campaign_id']}"
+        for mult in AD_BUDGET_MULTIPLIERS:
+            new_budget = float(round(weekly_budget * mult / 5) * 5)
+            label = "same budget" if mult == 1.0 else f"{mult - 1:+.0%} budget ({eur(new_budget)}/week)"
+            patch = [{"op": "add", "path": "/sponsored_listing/schedule", "value": schedule}]
+            if new_budget != weekly_budget:
+                patch.append({"op": "replace", "path": "/sponsored_listing/weekly_budget_eur", "value": new_budget})
+            recs.append(
+                Recommendation(
+                    id=f"{group}-daypart-b{round(mult * 100):03d}",
+                    agent="promo_ads",
+                    kind="ad_daypart",
+                    title="Move sponsored listing budget out of the dinner peak",
+                    rationale=(
+                        f"{peak_share:.0%} of sponsored orders arrive between 18:00 and 22:00, when the restaurant is "
+                        f"already at its busiest and most of those customers would likely have ordered anyway. "
+                        f"Each sponsored order costs about {eur(cpo)}."
                     ),
-                    Evidence(kind="order_stat", ref="sponsored_peak_share", value=round(peak_share, 3)),
-                ],
-                facts={
-                    **base,
-                    "weekly_budget_eur": weekly_budget,
-                    "sponsored_orders_per_week": round(sponsored_pw, 1),
-                    "cost_per_sponsored_order_eur": round(cpo, 2),
-                    "peak_share": round(peak_share, 3),
-                },
-                patch=[{"op": "add", "path": "/sponsored_listing/schedule", "value": schedule}],
-                confidence="med",
+                    action=f"Run the sponsored listing at {eur(new_budget)}/week, only in: {target}.",
+                    evidence=[
+                        EvidenceRef(
+                            kind="ad_campaign",
+                            ref=c["campaign_id"],
+                            detail=f"{eur(weekly_budget)}/week, {c['attributed_orders']} attributed orders",
+                            value=weekly_budget,
+                        ),
+                        EvidenceRef(
+                            kind="order_stat",
+                            ref="sponsored_peak_share",
+                            detail=f"{peak_share:.0%} of sponsored orders arrive 18:00-22:00",
+                            value=round(peak_share, 3),
+                        ),
+                    ],
+                    facts={
+                        **base,
+                        "weekly_budget_eur": weekly_budget,
+                        "new_weekly_budget_eur": new_budget,
+                        "sponsored_orders_per_week": round(sponsored_pw, 1),
+                        "cost_per_sponsored_order_eur": round(cpo, 2),
+                        "peak_share": round(peak_share, 3),
+                    },
+                    lever_changes=[
+                        LeverChange(
+                            lever="ad_offpeak_share",
+                            before=levers["ad_offpeak_share"],
+                            after=1.0,
+                            note="budget only runs in the off-peak slots",
+                        ),
+                        *(
+                            [
+                                LeverChange(
+                                    lever="ad_budget_eur",
+                                    before=levers["ad_budget_eur"],
+                                    after=new_budget,
+                                    note=label,
+                                )
+                            ]
+                            if new_budget != levers["ad_budget_eur"]
+                            else []
+                        ),
+                    ],
+                    variant_group=group,
+                    variant_label=label,
+                    patch=patch,
+                    confidence="med",
+                )
             )
-        )
 
     return recs

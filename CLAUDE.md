@@ -17,7 +17,7 @@ Do not build anything the demo doesn't show.
 ## Stack
 - Python 3.11+, `pip` + `venv` for env and deps (`requirements.txt`)
 - LangGraph for orchestration
-- LiteLLM for text generation (`growth/llm.py` is the only module that imports it)
+- Anthropic SDK for text generation (`growth/llm.py` is the only module that imports it)
 - TypeSafe Jev for classification (`growth/classify.py` is the only module that imports
   `typesafe_sdk`). Jev returns typed answers with calibrated confidence, never text. Use it
   for per-item labelling (review tags, yes/no checks). Keep each state short, one item per
@@ -25,9 +25,9 @@ Do not build anything the demo doesn't show.
 - Pydantic v2 for all state and LLM outputs (structured output, no free-text parsing)
 - DuckDB for data (single file `data/jet.duckdb`)
 - Streamlit for the demo UI
-- Env, loaded with python-dotenv. Never read or print the env file. `MODEL_MAIN` /
-  `MODEL_FAST` for LiteLLM must carry the provider prefix, or set `LLM_API_BASE` /
-  `LLM_API_KEY` for a proxy. `JEV_API_KEY` and optional `JEV_MODEL` (default `jev-latest`).
+- Env, loaded with python-dotenv. Never read or print the env file. `ANTHROPIC_API_KEY`,
+  `MODEL_MAIN` (default `claude-sonnet-5-5`), `MODEL_FAST` (default `claude-haiku-4-5-20251001`),
+  `JEV_API_KEY` and optional `JEV_MODEL` (default `jev-latest`). See `.env.example`.
   Jev answers are cached in `data/cache/jev.json` (gitignored); delete it to force fresh calls.
 
 ## Commands
@@ -56,7 +56,7 @@ growth/
     promo_ads.py      # dead-slot promos + moving sponsored budget out of the dinner peak
     impact.py         # one formula per rec kind; all assumptions are constants at the top
     common.py         # shared facts (basket, volume, commission) and helpers
-  llm.py              # LiteLLM wrapper: structured() -> Pydantic, retry once, else None
+  llm.py              # call_structured() -> Pydantic via tool use, retry once, else None
   classify.py         # Jev wrapper: ask_many([(state, questions)]) -> answers, disk-cached
   tools/listing.py    # read/apply patches to the mock listing store
 app/main.py           # Streamlit UI
@@ -87,6 +87,10 @@ competitor median on one category, missing photos on bestsellers.
 The demo depends on these being findable, so keep them in the seed.
 
 ## Graph
+Run it via `growth.graph`: `build_graph()`, stream to the approval interrupt, read
+`pending_approval()`, resume with `Command(resume={"approve": [ids], "reject": {id: reason}})`.
+The graph holds a read-write DuckDB connection; other code in the same process must open the
+file read-write too (DuckDB forbids mixed configurations).
 ```
 load_context -> [reviews, menu, pricing, promo_ads] (parallel)
              -> impact -> rank -> human_approval (interrupt) -> apply -> summary
@@ -102,14 +106,23 @@ patch (JSON patch on the listing, or null for advice-only),
 impact {orders_per_week, gmv_eur_per_week, jet_revenue_eur_per_week, ad_spend_eur},
 confidence (low/med/high)`.
 Evidence must reference real rows. No evidence means no recommendation.
+Agents also set `kind`, `facts`, and the ML contract fields:
+- `lever_changes`: list of `{lever, before, after, note}` using the `restaurant_weeks` column
+  names. `before` is the latest panel row (`queries.current_levers`). Empty when no model lever
+  applies (dish complaints, delivery, hiding a dish); impact then stays heuristic.
+- `variant_group` / `variant_label`: alternatives of one action (price cut depth, ad budget).
+  Choose at most one per group. `rank` shows the owner the best per group; all stay in state
+  for the optimiser.
 Impact numbers come from `impact.py` using simple, explainable heuristics,
 never from the LLM inventing figures. Show the formula in the UI.
 
 ## Conventions
 - Prompts live next to their agent as module-level constants. Keep them short.
-- Use `llm.structured(Schema, system, user)` to get Pydantic models back. It retries once
-  on validation error, then returns None; the caller skips that recommendation and logs it.
-- No network calls besides the LiteLLM endpoint and TypeSafe. No scraping during the demo.
+- Use `llm.call_structured(Schema, system, user)` to get Pydantic models back. It retries
+  once on validation error and returns None on failure (including API errors and a missing
+  key); the caller falls back or skips and logs. Don't force `tool_choice`: current models
+  reject it with a 400.
+- No network calls besides the Anthropic API and TypeSafe. No scraping during the demo.
 - Type hints everywhere. Small functions. No classes where a function will do.
 - Tests: one per agent on a fixture restaurant, asserting the planted problem is found.
 

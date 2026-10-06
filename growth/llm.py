@@ -5,7 +5,7 @@ import os
 from functools import cache
 from typing import TypeVar
 
-from anthropic import Anthropic
+from anthropic import Anthropic, APIError
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
@@ -53,14 +53,21 @@ def call_structured(
     messages: list[dict] = [{"role": "user", "content": user}]
 
     for attempt in (1, 2):
-        response = llm.messages.create(
-            model=model_name(fast),
-            max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-            tools=[tool],
-            tool_choice={"type": "tool", "name": TOOL_NAME},
-        )
+        try:
+            # Current models reject forced tool_choice ("tool"/"any") with a 400: use auto + instruction.
+            response = llm.messages.create(
+                model=model_name(fast),
+                max_tokens=max_tokens,
+                system=f"{system}\n\nRespond only by calling the `{TOOL_NAME}` tool.",
+                messages=messages,
+                tools=[tool],
+                tool_choice={"type": "auto"},
+            )
+        # APIError: auth, rate limit after SDK retries, bad request. TypeError: no credentials configured.
+        # Either way: skip this call, don't crash the agent.
+        except (APIError, TypeError) as err:
+            log.error("%s: API call failed: %s", schema.__name__, err)
+            return None
         block = next((b for b in response.content if b.type == "tool_use"), None)
         try:
             if block is None:

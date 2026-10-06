@@ -364,12 +364,12 @@ def get_listing(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> dict[str,
     return json.loads(rows[0]["listing"])
 
 
-def save_listing(con: duckdb.DuckDBPyConnection, restaurant_id: str, listing: dict[str, Any]) -> None:
+def save_listing(con: duckdb.DuckDBPyConnection, restaurant_id: str, listing: dict[str, Any], at: Any) -> None:
     import json
 
     con.execute(
-        "UPDATE listings SET listing = ?, updated_at = now() WHERE restaurant_id = ?",
-        [json.dumps(listing), restaurant_id],
+        "UPDATE listings SET listing = ?, updated_at = ? WHERE restaurant_id = ?",
+        [json.dumps(listing), at, restaurant_id],
     )
 
 
@@ -380,16 +380,39 @@ def log_change(
     recommendation_id: str,
     patch: list[dict[str, Any]],
     listing_before: dict[str, Any],
+    applied_at: Any,
 ) -> None:
     import json
 
     con.execute(
         """
         INSERT INTO change_log (change_id, restaurant_id, recommendation_id, patch, listing_before, applied_at)
-        VALUES (?, ?, ?, ?, ?, now())
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        [change_id, restaurant_id, recommendation_id, json.dumps(patch), json.dumps(listing_before)],
+        [change_id, restaurant_id, recommendation_id, json.dumps(patch), json.dumps(listing_before), applied_at],
     )
+
+
+def get_change(con: duckdb.DuckDBPyConnection, change_id: str) -> dict[str, Any] | None:
+    rows = _rows(con, "SELECT * FROM change_log WHERE change_id = ?", [change_id])
+    return rows[0] if rows else None
+
+
+def active_changes_since(con: duckdb.DuckDBPyConnection, restaurant_id: str, since: Any) -> list[dict[str, Any]]:
+    """Unreverted changes applied at or after `since`, newest first."""
+    return _rows(
+        con,
+        """
+        SELECT * FROM change_log
+        WHERE restaurant_id = ? AND applied_at >= ? AND reverted_at IS NULL
+        ORDER BY applied_at DESC
+        """,
+        [restaurant_id, since],
+    )
+
+
+def mark_reverted(con: duckdb.DuckDBPyConnection, change_id: str, reverted_at: Any) -> None:
+    con.execute("UPDATE change_log SET reverted_at = ? WHERE change_id = ?", [reverted_at, change_id])
 
 
 def get_change_log(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[dict[str, Any]]:
@@ -463,3 +486,25 @@ def category_orders(con: duckdb.DuckDBPyConnection, restaurant_id: str, category
         [restaurant_id, category, restaurant_id, weeks],
     ).fetchone()
     return int(row[0] or 0)
+
+
+LEVERS = ("photo_share", "description_share", "price_index", "promo_active", "ad_budget_eur", "ad_offpeak_share")
+
+
+def current_levers(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> dict[str, float]:
+    """The restaurant's lever values in its latest `restaurant_weeks` row (the `before` of a LeverChange)."""
+    row = con.execute(
+        f"""
+        SELECT {", ".join(LEVERS)} FROM restaurant_weeks
+        WHERE restaurant_id = ? ORDER BY week_start DESC LIMIT 1
+        """,
+        [restaurant_id],
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"no weekly history for {restaurant_id}")
+    return {k: float(v) for k, v in zip(LEVERS, row, strict=True)}
+
+
+def total_item_revenue(con: duckdb.DuckDBPyConnection, restaurant_id: str, weeks: int = 8) -> float:
+    """Item revenue over the last N weeks, the weight base for price-index changes."""
+    return float(sum(float(s["revenue_eur"]) for s in item_sales(con, restaurant_id, weeks)))

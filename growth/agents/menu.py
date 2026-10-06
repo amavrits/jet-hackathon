@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from growth import llm
 from growth.agents.common import WEEKS, base_facts, per_week, slug
 from growth.data import queries as q
-from growth.state import Evidence, Recommendation
+from growth.state import EvidenceRef, LeverChange, Recommendation
 
 BESTSELLERS = 3
 DEAD_ITEM_SHARE = 0.10  # of median item units
@@ -42,11 +42,11 @@ class Descriptions(BaseModel):
 def _write_descriptions(cuisine: str, dishes: list[dict]) -> dict[str, str]:
     """menu_item_id -> description. LLM first, template fallback per missing dish."""
     user = f"Cuisine: {cuisine}\n" + "\n".join(f"- {d['menu_item_id']}: {d['name']} ({d['category']})" for d in dishes)
-    out = llm.structured(Descriptions, DESCRIPTION_PROMPT, user)
+    out = llm.call_structured(Descriptions, DESCRIPTION_PROMPT, user)
     written = {i.menu_item_id: i.description.strip() for i in out.items} if out else {}
     return {
         d["menu_item_id"]: written.get(d["menu_item_id"])
-        or f"Our {d['name']}, a {cuisine.lower()} {d['category'].lower().rstrip('s')} made fresh to order."
+        or f"Our {d['name']}, a {cuisine} {d['category'].lower().rstrip('s')} made fresh to order."
         for d in dishes
     }
 
@@ -57,6 +57,8 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
         return []
     sales = q.item_sales(con, restaurant_id, weeks=WEEKS)  # sorted by units desc
     base = base_facts(con, restaurant_id)
+    levers = q.current_levers(con, restaurant_id)
+    n_menu = len(sales)
     recs: list[Recommendation] = []
 
     # --- bestsellers without photos
@@ -76,15 +78,23 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
                 ),
                 action="Upload one clear, well-lit photo for each of these dishes.",
                 evidence=[
-                    Evidence(
+                    EvidenceRef(
                         kind="menu_item",
                         ref=s["menu_item_id"],
-                        note=f"{s['name']}: #{sales.index(s) + 1} by units, no photo",
+                        detail=f"{s['name']}: #{sales.index(s) + 1} by units, no photo",
                         value=per_week(s["orders"]),
                     )
                     for s in no_photo
                 ],
                 facts={**base, "item_orders_per_week": orders_pw, "items": float(len(no_photo))},
+                lever_changes=[
+                    LeverChange(
+                        lever="photo_share",
+                        before=levers["photo_share"],
+                        after=round(min(1.0, levers["photo_share"] + len(no_photo) / n_menu), 3),
+                        note=f"+{len(no_photo)} of {n_menu} dishes with a photo",
+                    )
+                ],
                 confidence="high",
             )
         )
@@ -106,10 +116,18 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
                 ),
                 action="Review the suggested descriptions below and approve to publish them.",
                 evidence=[
-                    Evidence(kind="menu_item", ref=s["menu_item_id"], note=f"{s['name']}: no description")
+                    EvidenceRef(kind="menu_item", ref=s["menu_item_id"], detail=f"{s['name']}: no description")
                     for s in no_desc
                 ],
                 facts={**base, "item_orders_per_week": orders_pw, "items": float(len(no_desc))},
+                lever_changes=[
+                    LeverChange(
+                        lever="description_share",
+                        before=levers["description_share"],
+                        after=round(min(1.0, levers["description_share"] + len(no_desc) / n_menu), 3),
+                        note=f"+{len(no_desc)} of {n_menu} dishes with a description",
+                    )
+                ],
                 patch=[
                     {
                         "op": "replace",
@@ -138,10 +156,10 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
                     ),
                     action=f"Hide {s['name']} for now. It can be switched back on at any time.",
                     evidence=[
-                        Evidence(
+                        EvidenceRef(
                             kind="order_stat",
                             ref=s["menu_item_id"],
-                            note=f"{s['units']} units vs median {med_units:.0f}",
+                            detail=f"{s['units']} units vs median {med_units:.0f}",
                             value=float(s["units"]),
                         )
                     ],

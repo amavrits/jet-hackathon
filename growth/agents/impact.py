@@ -95,16 +95,25 @@ def _slot_promo(f: dict[str, float]) -> Impact:
 
 
 def _ad_daypart(f: dict[str, float]) -> Impact:
+    """Reschedule off-peak, optionally at a new budget. Ad yield is concave in budget (sqrt)."""
     sponsored = f["sponsored_orders_per_week"]
+    old, new = f["weekly_budget_eur"], f.get("new_weekly_budget_eur", f["weekly_budget_eur"])
+    scale = (new / old) ** 0.5 if old else 0.0
     gain = INCREMENTAL_OFF_PEAK - INCREMENTAL_PEAK
-    orders = sponsored * f["peak_share"] * gain
+    shift = sponsored * f["peak_share"] * gain * scale  # same customers, now reached when they're incremental
+    extra = sponsored * (scale - 1) * INCREMENTAL_OFF_PEAK  # more (or fewer) customers reached
+    orders = shift + extra
+    spend = new - old  # JET earns ad spend, so a budget change is JET revenue too
     return _impact(
         orders,
         orders * f["avg_basket_eur"],
         f["commission_rate"],
-        f"{sponsored:.0f} sponsored orders/wk x {f['peak_share']:.0%} at peak x "
-        f"({INCREMENTAL_OFF_PEAK:.0%} - {INCREMENTAL_PEAK:.0%}) incrementality gain x €{f['avg_basket_eur']:.2f} "
-        f"basket x {f['commission_rate']:.0%} commission. Same budget, so no change in ad spend.",
+        f"{sponsored:.0f} sponsored orders/wk x sqrt(€{new:.0f}/€{old:.0f}) budget scaling; "
+        f"{f['peak_share']:.0%} moved off-peak gain "
+        f"({INCREMENTAL_OFF_PEAK:.0%} - {INCREMENTAL_PEAK:.0%}) incrementality, "
+        f"new reach at {INCREMENTAL_OFF_PEAK:.0%}; x €{f['avg_basket_eur']:.2f} basket x "
+        f"{f['commission_rate']:.0%} commission, plus €{spend:+.0f}/wk ad spend",
+        ad_spend=spend,
     )
 
 

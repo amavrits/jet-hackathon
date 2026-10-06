@@ -42,7 +42,7 @@ def _oracle_answers(state: str, questions: dict) -> dict:
 @pytest.fixture
 def offline(monkeypatch):
     monkeypatch.setattr(R, "ask_many", lambda items: [_oracle_answers(s, q) for s, q in items])
-    monkeypatch.setattr(llm, "structured", lambda *a, **k: None)
+    monkeypatch.setattr(llm, "call_structured", lambda *a, **k: None)
 
 
 def _expected(rid: str) -> set[str]:
@@ -61,7 +61,7 @@ def _found(recs) -> set[str]:
     out = set()
     for r in recs:
         if r.kind == "dish_quality":
-            dish = next(e.note.split(":")[0] for e in r.evidence if e.kind == "menu_item")
+            dish = next(e.detail.split(":")[0] for e in r.evidence if e.kind == "menu_item")
             out.add(f"dish_quality:{dish}")
         else:
             out.add(r.kind)
@@ -89,5 +89,5 @@ def test_delivery_card_names_who_delivers(con, offline):
 @pytest.mark.skipif(not (os.environ.get("JEV_API_KEY") or os.environ.get("TYPESAFE_API_KEY")), reason="no Jev key")
 @pytest.mark.parametrize("rid", ["r_bella_napoli", "r_golden_wok", "r_pho_house", "r_petit_bistro"])
 def test_live_jev_finds_planted(con, monkeypatch, rid):
-    monkeypatch.setattr(llm, "structured", lambda *a, **k: None)
+    monkeypatch.setattr(llm, "call_structured", lambda *a, **k: None)
     assert _found(R.run(con, rid)) == _expected(rid)

@@ -131,6 +131,11 @@ predict_impact(restaurant_id, changes) ->
 Δlog organic orders = Σ β_lever · Δlever. New orders = current orders · exp(Δ) plus the change
 in ad orders. GMV uses the basket model. JET revenue = commission · ΔGMV + Δad spend.
 
+**Implemented on the agent side:** every recommendation carries `lever_changes`
+(`growth/state.py: LeverChange`), so `predict_impact(restaurant_id, rec.lever_changes)` needs
+nothing else. Pricing emits cut-depth variants (within 15/10/5% of the local median) and the
+ad agent emits budget variants (x0.75, x1, x1.5, all off-peak), linked by `variant_group`.
+
 How each recommendation kind maps to a lever:
 
 | Recommendation kind | Lever change |

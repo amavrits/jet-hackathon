@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from growth import llm
 from growth.classify import Answers, Choice, Noul, ask_many
 from growth.data import queries as q
-from growth.state import Evidence, Recommendation
+from growth.state import EvidenceRef, Recommendation
 
 log = logging.getLogger(__name__)
 
@@ -162,16 +162,22 @@ def _confidence(group: list[ReviewTag]) -> str:
 
 def _word(facts: dict[str, Any], quotes: list[str], fallback: Wording) -> Wording:
     lines = [f"{k}: {v}" for k, v in facts.items()] + ["Customer quotes:"] + [f'- "{s}"' for s in quotes]
-    return llm.structured(Wording, SYSTEM_PROMPT, "\n".join(lines)) or fallback
+    return llm.call_structured(Wording, SYSTEM_PROMPT, "\n".join(lines)) or fallback
 
 
 def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
-def _review_evidence(group: list[ReviewTag]) -> list[Evidence]:
-    ranked = sorted(group, key=lambda t: t.issue_conf, reverse=True)[:MAX_QUOTES]
-    return [Evidence(kind="review", ref=t.review_id, note=t.text, value=round(t.issue_conf, 2)) for t in ranked]
+def _review_evidence(group: list[ReviewTag]) -> list[EvidenceRef]:
+    seen: set[str] = set()
+    ranked = []
+    for t in sorted(group, key=lambda t: t.issue_conf, reverse=True):
+        if t.text not in seen:  # prefer distinct quotes; duplicates add nothing for the reader
+            seen.add(t.text)
+            ranked.append(t)
+    ranked = ranked[:MAX_QUOTES]
+    return [EvidenceRef(kind="review", ref=t.review_id, detail=t.text, value=round(t.issue_conf, 2)) for t in ranked]
 
 
 # ---------------------------------------------------------------------- run
@@ -222,10 +228,10 @@ def run(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[Recommendati
                 action=wording.action,
                 evidence=[
                     *_review_evidence(group),
-                    Evidence(
+                    EvidenceRef(
                         kind="menu_item",
                         ref=item.get("menu_item_id", dish),
-                        note=f"{dish}: {dish_orders_pw:.1f} orders/week",
+                        detail=f"{dish}: {dish_orders_pw:.1f} orders/week",
                         value=dish_orders_pw,
                     ),
                 ],
