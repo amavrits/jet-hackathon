@@ -21,7 +21,7 @@ def test_soggy_item_is_worst_rated(con):
             assert worst["name"] == planted["soggy_item"]
             assert worst["avg_rating"] < 2.5
             texts = [r["text"].lower() for r in q.get_reviews(con, rid) if r["item_name"] == planted["soggy_item"]]
-            assert sum("soggy" in t for t in texts) >= 10
+            assert sum("soggy" in t for t in texts) < len(texts) / 2  # not keyword-findable
 
 
 def test_dead_slot_is_visible(con):

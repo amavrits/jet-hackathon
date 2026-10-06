@@ -24,7 +24,11 @@ CREATE TABLE IF NOT EXISTS restaurants (
     delivery_model  VARCHAR NOT NULL,       -- 'marketplace' | 'jet_delivery'
     commission_rate DOUBLE NOT NULL,        -- 0.15 or 0.30
     rating          DOUBLE NOT NULL,
-    joined_at       DATE NOT NULL
+    joined_at       DATE NOT NULL,
+    lat             DOUBLE NOT NULL,
+    lon             DOUBLE NOT NULL,
+    price_level     INTEGER NOT NULL,       -- 1 budget | 2 mid | 3 premium
+    is_partner      BOOLEAN NOT NULL        -- TRUE: the 8 demo partners with item-level detail
 );
 
 CREATE TABLE IF NOT EXISTS menu_items (
@@ -98,6 +102,35 @@ CREATE TABLE IF NOT EXISTS listings (
     updated_at      TIMESTAMP NOT NULL
 );
 
+-- Weekly panel for every restaurant in the market (partners + the rest), 26 weeks.
+-- This is what impact estimation learns from: levers, outcomes, and controls per week.
+CREATE TABLE IF NOT EXISTS restaurant_weeks (
+    restaurant_id       VARCHAR NOT NULL,
+    week_start          DATE NOT NULL,
+    orders              INTEGER NOT NULL,
+    gmv_eur             DOUBLE NOT NULL,
+    avg_basket_eur      DOUBLE NOT NULL,
+    photo_share         DOUBLE NOT NULL,    -- share of menu items with a photo
+    description_share   DOUBLE NOT NULL,    -- share of menu items with a description
+    price_index         DOUBLE NOT NULL,    -- own prices / nearby same-cuisine median (1.0 = at market)
+    promo_active        BOOLEAN NOT NULL,
+    ad_budget_eur       DOUBLE NOT NULL,    -- weekly sponsored-listing budget, 0 = none
+    ad_offpeak_share    DOUBLE NOT NULL,    -- share of the ad budget scheduled outside 18-22h
+    rating              DOUBLE NOT NULL,
+    PRIMARY KEY (restaurant_id, week_start)
+);
+
+-- Observable log of listing changes restaurants made in the past (JET has this for real).
+CREATE TABLE IF NOT EXISTS change_events (
+    event_id        VARCHAR PRIMARY KEY,
+    restaurant_id   VARCHAR NOT NULL,
+    week_start      DATE NOT NULL,          -- first week the change is live
+    change_type     VARCHAR NOT NULL,       -- photos | descriptions | price | promo_start | promo_end
+                                            -- | ad_start | ad_stop | ad_budget | ad_daypart
+    before_value    DOUBLE,
+    after_value     DOUBLE
+);
+
 -- Every approved patch applied to a listing. Reversible via `reverted_at`.
 CREATE TABLE IF NOT EXISTS change_log (
     change_id       VARCHAR PRIMARY KEY,
@@ -130,7 +163,8 @@ def _rows(con: duckdb.DuckDBPyConnection, sql: str, params: list[Any] | None = N
 
 
 def list_restaurants(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    return _rows(con, "SELECT * FROM restaurants ORDER BY name")
+    """The demo partners only. Market restaurants live in the same table with is_partner = FALSE."""
+    return _rows(con, "SELECT * FROM restaurants WHERE is_partner ORDER BY name")
 
 
 def get_restaurant(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> dict[str, Any] | None:
@@ -364,3 +398,68 @@ def get_change_log(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[d
         "SELECT * FROM change_log WHERE restaurant_id = ? ORDER BY applied_at DESC",
         [restaurant_id],
     )
+
+
+def low_rated_reviews_with_order_items(
+    con: duckdb.DuckDBPyConnection, restaurant_id: str, max_rating: int = 3
+) -> list[dict[str, Any]]:
+    """Reviews at or below `max_rating`, each with the names of the dishes in its order.
+
+    Reviews are written per order, so the dish a complaint is about has to be read from the text;
+    `order_items` is the candidate list for that.
+    """
+    return _rows(
+        con,
+        """
+        SELECT r.review_id, r.rating, r.text, r.created_at, r.order_id,
+               list(DISTINCT m.name ORDER BY m.name) AS order_items
+        FROM reviews r
+        JOIN orders o USING (order_id)
+        JOIN menu_items m ON m.menu_item_id = o.menu_item_id
+        WHERE r.restaurant_id = ? AND r.rating <= ?
+        GROUP BY r.review_id, r.rating, r.text, r.created_at, r.order_id
+        ORDER BY r.created_at
+        """,
+        [restaurant_id, max_rating],
+    )
+
+
+def review_window_weeks(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> float:
+    """Span of the review history in weeks, to turn counts into weekly rates."""
+    row = con.execute(
+        "SELECT date_diff('day', MIN(created_at), MAX(created_at)) FROM reviews WHERE restaurant_id = ?",
+        [restaurant_id],
+    ).fetchone()
+    return max(1.0, (row[0] or 7) / 7)
+
+
+def sponsored_share_in_hours(con: duckdb.DuckDBPyConnection, restaurant_id: str, hours: list[int]) -> dict[str, Any]:
+    """How many sponsored vs organic orders fall in the given hours (e.g. the dinner peak)."""
+    return _rows(
+        con,
+        """
+        SELECT
+            COUNT(DISTINCT order_id) FILTER (WHERE channel = 'sponsored') AS sponsored,
+            COUNT(DISTINCT order_id) FILTER (
+                WHERE channel = 'sponsored' AND list_contains(?, hour(placed_at))
+            ) AS sponsored_in_hours,
+            COUNT(DISTINCT order_id) AS total,
+            COUNT(DISTINCT order_id) FILTER (WHERE list_contains(?, hour(placed_at))) AS total_in_hours
+        FROM orders WHERE restaurant_id = ?
+        """,
+        [hours, hours, restaurant_id],
+    )[0]
+
+
+def category_orders(con: duckdb.DuckDBPyConnection, restaurant_id: str, category: str, weeks: int = 8) -> int:
+    """Distinct orders containing at least one dish from `category` in the last N weeks."""
+    row = con.execute(
+        """
+        SELECT COUNT(DISTINCT o.order_id)
+        FROM orders o JOIN menu_items m USING (menu_item_id)
+        WHERE o.restaurant_id = ? AND m.category = ?
+          AND o.placed_at >= (SELECT MAX(placed_at) FROM orders WHERE restaurant_id = ?) - INTERVAL (?) WEEK
+        """,
+        [restaurant_id, category, restaurant_id, weeks],
+    ).fetchone()
+    return int(row[0] or 0)

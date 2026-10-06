@@ -231,4 +231,5 @@ __marimo__/
 *.xml
 *.iml
 secrets/*.env
-!secrets/*.example
+!secrets/*.exampledata/cache/
+data/true_model.json

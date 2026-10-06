@@ -1,10 +1,12 @@
 # Core
-anthropic
+litellm==1.104.0
+typesafe-sdk==0.7.2
 langgraph==1.2.13
 langgraph-checkpoint==4.2.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 duckdb==1.5.6
+numpy==2.4.6
 jsonpatch==1.33
 python-dotenv==1.2.4
 

@@ -1,6 +1,7 @@
-"""Synthetic data generator (deterministic, seeded). Writes data/jet.duckdb.
+"""Demo partner restaurants: item-level orders, reviews, menus, listings, planted problems.
 
-Run:  python -m growth.data.seed [--db data/jet.duckdb] [--weeks 8]
+Called by runners/generate_data.py, which owns the database and the market around the partners.
+Build the database with:  python -m runners.generate_data
 
 Every restaurant gets a realistic baseline (menu, 8 weeks of item-level orders,
 reviews, nearby competitors, listing). On top of that, `PLANTED` lists the
@@ -9,17 +10,14 @@ problems the demo must be able to find. Tests import `PLANTED` as the oracle.
 
 from __future__ import annotations
 
-import argparse
 import json
+import math
 import random
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
-from growth.data.queries import DB_PATH, connect, create_schema
-
 SEED = 42
-END_DATE = date(2026, 10, 5)  # last full day of data (a Sunday)
+END_DATE = date(2026, 10, 5)  # last day of data (a Monday)
 
 COMMISSION = {"marketplace": 0.15, "jet_delivery": 0.30}
 
@@ -154,6 +152,9 @@ DESCRIPTIONS = [
 RESTAURANTS: list[dict[str, Any]] = [
     {
         "restaurant_id": "r_bella_napoli",
+        "lat": 52.3637,
+        "lon": 4.892,
+        "price_level": 2,
         "name": "Bella Napoli",
         "cuisine": "Pizza",
         "city": "Amsterdam",
@@ -166,6 +167,9 @@ RESTAURANTS: list[dict[str, Any]] = [
     },
     {
         "restaurant_id": "r_spice_route",
+        "lat": 52.368,
+        "lon": 4.865,
+        "price_level": 2,
         "name": "Spice Route",
         "cuisine": "Indian",
         "city": "Amsterdam",
@@ -178,6 +182,9 @@ RESTAURANTS: list[dict[str, Any]] = [
     },
     {
         "restaurant_id": "r_golden_wok",
+        "lat": 51.92,
+        "lon": 4.485,
+        "price_level": 1,
         "name": "Golden Wok",
         "cuisine": "Chinese",
         "city": "Rotterdam",
@@ -191,6 +198,9 @@ RESTAURANTS: list[dict[str, Any]] = [
     },
     {
         "restaurant_id": "r_burger_barn",
+        "lat": 52.092,
+        "lon": 5.118,
+        "price_level": 2,
         "name": "Burger Barn",
         "cuisine": "Burgers",
         "city": "Utrecht",
@@ -203,6 +213,9 @@ RESTAURANTS: list[dict[str, Any]] = [
     },
     {
         "restaurant_id": "r_sushi_zen",
+        "lat": 52.356,
+        "lon": 4.885,
+        "price_level": 3,
         "name": "Sushi Zen",
         "cuisine": "Sushi",
         "city": "Amsterdam",
@@ -215,6 +228,9 @@ RESTAURANTS: list[dict[str, Any]] = [
     },
     {
         "restaurant_id": "r_taverna",
+        "lat": 52.079,
+        "lon": 4.315,
+        "price_level": 2,
         "name": "Taverna Mykonos",
         "cuisine": "Greek",
         "city": "The Hague",
@@ -227,6 +243,9 @@ RESTAURANTS: list[dict[str, Any]] = [
     },
     {
         "restaurant_id": "r_pho_house",
+        "lat": 51.918,
+        "lon": 4.47,
+        "price_level": 1,
         "name": "Pho House",
         "cuisine": "Vietnamese",
         "city": "Rotterdam",
@@ -234,11 +253,15 @@ RESTAURANTS: list[dict[str, Any]] = [
         "delivery_model": "jet_delivery",
         "rating": 4.6,
         "daily_orders": 28,
+        "late_delivery": True,
         "overpriced_category": "Starters",
         "missing_descriptions": True,
     },
     {
         "restaurant_id": "r_petit_bistro",
+        "lat": 52.087,
+        "lon": 5.124,
+        "price_level": 3,
         "name": "Le Petit Bistro",
         "cuisine": "French",
         "city": "Utrecht",
@@ -262,6 +285,7 @@ PLANTED: dict[str, dict[str, Any]] = {
             "dead_slot",
             "overpriced_category",
             "missing_photos",
+            "late_delivery",
             "missing_descriptions",
             "dead_item",
             "wasted_ads",
@@ -294,19 +318,41 @@ BAD = [
     "Missing an item from my order.",
     "{item} was not as described.",
     "Portion was smaller than last time.",
+    "Courier took over an hour, food had been sitting somewhere for ages.",
+    "Driver went to the wrong address first, everything was cold by the time it got here.",
 ]
+# Planted texture complaint: deliberately varied so a keyword search for "soggy" misses most of them.
 SOGGY = [
     "{item} was completely soggy by the time it arrived.",
-    "Soggy {item}, really disappointing.",
-    "The {item} turned to mush in the box. Soggy and greasy.",
-    "Second time the {item} came soggy. Won't order it again.",
-    "{item} soggy and cold. Everything else was fine.",
+    "The {item} turned to mush in the box.",
+    "Bottom of the {item} was wet and falling apart, steam must get trapped in the packaging.",
+    "{item} had zero crunch left, limp and greasy.",
+    "Not crispy at all. The {item} was like wet cardboard.",
+    "Had to throw half the {item} away, the dough was sodden.",
+    "The {item} sweats in that closed container, every time it ends up floppy.",
+    "Love the place but the {item} never survives the trip, it arrives a damp mess.",
+    "{item} was chewy and wet instead of crisp. Rest of the order was great.",
+    "Second time the {item} came limp. Won't order it again.",
 ]
 COLD = [
-    "{item} arrived cold.",
-    "Cold {item}, had to microwave it.",
-    "The {item} was stone cold on arrival.",
-    "{item} cold again, third time now.",
+    "{item} arrived cold even though the rest of the order was hot.",
+    "Had to microwave the {item}, it was barely room temperature.",
+    "The {item} was stone cold, the other dishes were fine so it was not the driver.",
+    "Everything else steaming, but the {item} was lukewarm and the sauce had congealed.",
+    "{item} tastes like it was cooked an hour before the order. Fridge cold in the middle.",
+    "The {item} was not warm at all, noodles stuck together in a cold lump.",
+]
+
+# Planted courier problem (JET-delivered restaurant): about the delivery, never about one dish.
+LATE = [
+    "Waited 75 minutes, the app kept saying the courier was 5 minutes away.",
+    "Food was ready on time according to the tracker but the rider only picked it up 40 min later.",
+    "Driver cycled around the block twice, couldn't find us, everything arrived cold.",
+    "Order sat at the restaurant waiting for a courier for ages. Not the restaurant's fault.",
+    "Delivery estimate jumped from 30 to 70 minutes after I ordered.",
+    "Rider had three other orders on him, ours came last and lukewarm.",
+    "Courier marked it delivered before he even arrived.",
+    "Friday night and it took well over an hour, soup was barely warm.",
 ]
 
 # --------------------------------------------------------------------- helpers
@@ -369,22 +415,28 @@ def _make_menu(rng: random.Random, cfg: dict[str, Any]) -> list[dict[str, Any]]:
     return items
 
 
-def _make_competitors(rng: random.Random, cfg: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """4-6 nearby competitors with menus priced around the *baseline* (un-inflated) prices."""
+def _make_competitors(
+    rng: random.Random, cfg: dict[str, Any], market: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The 5 nearest same-cuisine market restaurants, with menus priced around the *baseline* prices.
+
+    Competitor menus are only generated for these; the rest of the market exists in the weekly panel.
+    """
     rid = cfg["restaurant_id"]
+    same = [m for m in market if m["cuisine"] == cfg["cuisine"] and not m.get("is_partner")]
+    nearest = sorted(same, key=lambda m: haversine_km(cfg["lat"], cfg["lon"], m["lat"], m["lon"]))[:5]
     comps, comp_items = [], []
-    adjectives = ["Royal", "Little", "Golden", "Urban", "Mama's", "Express", "House of", "The Real"]
-    for c in range(rng.randint(4, 6)):
-        cid = f"{rid}_c{c}"
+    for m in nearest:
+        cid = m["restaurant_id"]
         comps.append(
             {
                 "competitor_id": cid,
                 "restaurant_id": rid,
-                "name": f"{rng.choice(adjectives)} {cfg['cuisine']} {c + 1}",
-                "cuisine": cfg["cuisine"],
-                "distance_km": round(rng.uniform(0.3, 2.5), 1),
-                "rating": round(rng.uniform(3.8, 4.7), 1),
-                "is_sponsored": rng.random() < 0.35,
+                "name": m["name"],
+                "cuisine": m["cuisine"],
+                "distance_km": round(haversine_km(cfg["lat"], cfg["lon"], m["lat"], m["lon"]), 2),
+                "rating": m["rating"],
+                "is_sponsored": bool(m.get("has_ads")),
             }
         )
         for n, (name, category, price) in enumerate(MENUS[cfg["cuisine"]]):
@@ -400,6 +452,14 @@ def _make_competitors(rng: random.Random, cfg: dict[str, Any]) -> tuple[list[dic
                 }
             )
     return comps, comp_items
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
 
 
 def _make_orders(
@@ -505,6 +565,12 @@ def _make_reviews(
         for oid in rng.sample(with_item, k=min(14, len(with_item))):
             add(oid, item, rng.choice([1, 2, 2]), rng.choice(templates))
 
+    if cfg.get("late_delivery"):
+        # Peak-hour orders only: the planted courier problem shows up when the network is busy.
+        peak = [oid for oid, ls in lines_by_order.items() if ls[0]["placed_at"].hour in (18, 19, 20)]
+        for oid in rng.sample(peak, k=min(30, len(peak))):
+            add(oid, None, rng.choice([1, 1, 2]), rng.choice(LATE))
+
     reviews.sort(key=lambda r: r["created_at"])
     return reviews
 
@@ -543,9 +609,9 @@ def _make_listing(cfg: dict[str, Any], items: list[dict[str, Any]]) -> dict[str,
         "description": f"{cfg['cuisine']} food delivered in {cfg['city']}.",
         "tags": [cfg["cuisine"].lower()],
         "opening_hours": {d: "11:00-23:00" for d in ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]},
-        "menu": [
-            {
-                "menu_item_id": it["menu_item_id"],
+        # Keyed by menu_item_id so JSON Patch paths stay stable: /menu/<menu_item_id>/price_eur
+        "menu": {
+            it["menu_item_id"]: {
                 "name": it["name"],
                 "category": it["category"],
                 "description": it["description"],
@@ -554,7 +620,7 @@ def _make_listing(cfg: dict[str, Any], items: list[dict[str, Any]]) -> dict[str,
                 "is_available": it["is_available"],
             }
             for it in items
-        ],
+        },
         "promotions": [],
         "sponsored_listing": {
             "active": bool(cfg.get("wasted_ads")),
@@ -577,17 +643,11 @@ def _insert(con: Any, table: str, rows: list[dict[str, Any]]) -> None:
     )
 
 
-def seed(db_path: Path | str = DB_PATH, weeks: int = 8, verbose: bool = True) -> dict[str, int]:
-    """Rebuild the database from scratch. Returns row counts per table."""
-    db_path = Path(db_path)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    if db_path.exists():
-        db_path.unlink()
+def seed_partners(con: Any, market: list[dict[str, Any]], weeks: int = 8) -> None:
+    """Insert the demo partners with item-level detail. Competitors are picked from `market`.
 
-    con = connect(db_path)
-    create_schema(con)
-    counts: dict[str, int] = {}
-
+    The DB lifecycle (schema, market, weekly panel) is owned by runners/generate_data.py.
+    """
     for cfg in RESTAURANTS:
         rng = random.Random(f"{SEED}:{cfg['restaurant_id']}")
         items = _make_menu(rng, cfg)
@@ -598,7 +658,7 @@ def seed(db_path: Path | str = DB_PATH, weeks: int = 8, verbose: bool = True) ->
                     it["photo_url"] = None
         orders = _make_orders(rng, cfg, items, weights, weeks)
         reviews = _make_reviews(rng, cfg, items, orders)
-        comps, comp_items = _make_competitors(rng, cfg)
+        comps, comp_items = _make_competitors(rng, cfg, market)
         ads = _make_ads(rng, cfg, orders, weeks)
         listing = _make_listing(cfg, items)
 
@@ -616,6 +676,10 @@ def seed(db_path: Path | str = DB_PATH, weeks: int = 8, verbose: bool = True) ->
                     "commission_rate": COMMISSION[cfg["delivery_model"]],
                     "rating": cfg["rating"],
                     "joined_at": date(2024, rng.randint(1, 12), rng.randint(1, 28)),
+                    "lat": cfg["lat"],
+                    "lon": cfg["lon"],
+                    "price_level": cfg["price_level"],
+                    "is_partner": True,
                 }
             ],
         )
@@ -629,35 +693,3 @@ def seed(db_path: Path | str = DB_PATH, weeks: int = 8, verbose: bool = True) ->
             "INSERT INTO listings VALUES (?, ?, ?)",
             [cfg["restaurant_id"], json.dumps(listing), datetime.combine(END_DATE, datetime.min.time())],
         )
-
-    for table in [
-        "restaurants",
-        "menu_items",
-        "orders",
-        "reviews",
-        "competitors",
-        "competitor_menu_items",
-        "ad_campaigns",
-        "listings",
-        "change_log",
-    ]:
-        counts[table] = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-    con.close()
-
-    if verbose:
-        print(f"Seeded {db_path}")
-        for t, n in counts.items():
-            print(f"  {t:<22} {n:>7}")
-    return counts
-
-
-def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--db", default=str(DB_PATH))
-    p.add_argument("--weeks", type=int, default=8)
-    args = p.parse_args()
-    seed(args.db, args.weeks)
-
-
-if __name__ == "__main__":
-    main()

@@ -16,21 +16,29 @@ Do not build anything the demo doesn't show.
 
 ## Stack
 - Python 3.11+, `pip` + `venv` for env and deps (`requirements.txt`)
-- LangGraph for orchestration, Anthropic SDK for Claude
+- LangGraph for orchestration
+- LiteLLM for text generation (`growth/llm.py` is the only module that imports it)
+- TypeSafe Jev for classification (`growth/classify.py` is the only module that imports
+  `typesafe_sdk`). Jev returns typed answers with calibrated confidence, never text. Use it
+  for per-item labelling (review tags, yes/no checks). Keep each state short, one item per
+  call, and do counting and arithmetic in Python, never in the model.
 - Pydantic v2 for all state and LLM outputs (structured output, no free-text parsing)
 - DuckDB for data (single file `data/jet.duckdb`)
 - Streamlit for the demo UI
-- Models: from env `MODEL_MAIN` (default `claude-sonnet-5-5`) and `MODEL_FAST`
-  (default `claude-haiku-4-5-20251001`) for cheap per-item work like review tagging
+- Env, loaded with python-dotenv. Never read or print the env file. `MODEL_MAIN` /
+  `MODEL_FAST` for LiteLLM must carry the provider prefix, or set `LLM_API_BASE` /
+  `LLM_API_KEY` for a proxy. `JEV_API_KEY` and optional `JEV_MODEL` (default `jev-latest`).
+  Jev answers are cached in `data/cache/jev.json` (gitignored); delete it to force fresh calls.
 
 ## Commands
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt         # install
-python -m growth.data.seed              # generate synthetic data -> data/jet.duckdb
+python -m runners.generate_data         # build data/jet.duckdb from the true model (~5 s)
 python -m growth.cli <rest_id>          # run graph headless, print recommendations
 streamlit run app/main.py               # demo UI
-pytest -q                               # tests
+pytest -q                               # tests; live API tests auto-skip without keys
+pytest -q -m live                       # only the live API tests
 ruff check . && ruff format .
 ```
 
@@ -42,20 +50,37 @@ growth/
   state.py            # GraphState + Recommendation models
   graph.py            # LangGraph wiring
   agents/
-    reviews.py        # review themes, complaints per dish
-    menu.py           # descriptions, photos, dish pruning, bundles
-    pricing.py        # price positioning vs nearby competitors
-    promo_ads.py      # promo timing (slow slots) + sponsored listing budget
-    impact.py         # estimates impact for each recommendation
+    reviews.py        # Jev-tagged complaints per dish, plus a delivery-fault card
+    menu.py           # bestseller photos, missing descriptions (patch writes them), dead dishes
+    pricing.py        # like-for-like price premium per category vs nearby competitors
+    promo_ads.py      # dead-slot promos + moving sponsored budget out of the dinner peak
+    impact.py         # one formula per rec kind; all assumptions are constants at the top
+    common.py         # shared facts (basket, volume, commission) and helpers
+  llm.py              # LiteLLM wrapper: structured() -> Pydantic, retry once, else None
+  classify.py         # Jev wrapper: ask_many([(state, questions)]) -> answers, disk-cached
   tools/listing.py    # read/apply patches to the mock listing store
 app/main.py           # Streamlit UI
+runners/
+  true_model.py       # TRUE demand model + market simulation. Ground truth, see below
+  generate_data.py    # builds data/jet.duckdb and data/true_model.json
+docs/ml-design.md     # true model, impact estimation, MCP server, optimisation
 tests/
 ```
 
 ## Data model (synthetic)
+Market: ~260 restaurants in `restaurants` (lat/lon, cuisine, price_level 1-3); `is_partner`
+marks the 8 demo partners, which alone have item-level orders, reviews, menus and listings.
+`restaurant_weeks` is a 26-week panel for every restaurant (orders, GMV, levers such as
+photo_share, price_index, promo, ad budget); `change_events` logs past changes. Competitors of
+a partner are its 5 nearest same-cuisine market restaurants.
+**Ground truth rule:** `runners/true_model.py` and `data/true_model.json` hold the true
+effects. Nothing under `growth/` may import or read them; estimators must recover effects from
+the observable tables, and only tests compare against the truth.
 Tables: `restaurants`, `menu_items`, `orders` (item-level, timestamped),
 `reviews` (rating, text, item refs), `competitors` (nearby restaurants + menus),
 `ad_campaigns`, `listings` (current public listing as JSON).
+The listing's `menu` is an object keyed by `menu_item_id`, so patch paths are stable:
+`/menu/<menu_item_id>/price_eur`. Promotions append to `/promotions/-`.
 Seed 5–10 restaurants with planted, discoverable problems, for example: a dish with
 repeated "soggy" reviews, Tuesday afternoon dead slot, prices 25% above the
 competitor median on one category, missing photos on bestsellers.
@@ -82,9 +107,9 @@ never from the LLM inventing figures. Show the formula in the UI.
 
 ## Conventions
 - Prompts live next to their agent as module-level constants. Keep them short.
-- Use Claude tool use / structured output to get Pydantic models back. Retry once on
-  validation error, then skip that recommendation and log it.
-- No network calls besides the Anthropic API. No scraping during the demo.
+- Use `llm.structured(Schema, system, user)` to get Pydantic models back. It retries once
+  on validation error, then returns None; the caller skips that recommendation and logs it.
+- No network calls besides the LiteLLM endpoint and TypeSafe. No scraping during the demo.
 - Type hints everywhere. Small functions. No classes where a function will do.
 - Tests: one per agent on a fixture restaurant, asserting the planted problem is found.
 
