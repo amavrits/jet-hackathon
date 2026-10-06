@@ -95,3 +95,13 @@ def test_every_kind_has_an_estimator():
         "ad_daypart",
     }
     assert kinds <= set(impact.ESTIMATORS)
+
+
+def test_partner_cost_is_what_the_owner_gives_up(con):
+    for rid in ("r_spice_route", "r_sushi_zen"):
+        for r in impact.run(pricing.run(con, rid) + promo_ads.run(con, rid)):
+            cost = r.impact.partner_cost_eur_per_week
+            if r.kind in ("price_cut", "slot_promo"):
+                assert cost > 0, r.id
+            if r.kind == "ad_daypart":
+                assert cost == r.facts["new_weekly_budget_eur"] - r.facts["weekly_budget_eur"]

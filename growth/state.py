@@ -40,6 +40,9 @@ class Impact(BaseModel):
     gmv_eur_per_week: float = 0.0
     jet_revenue_eur_per_week: float = 0.0
     ad_spend_eur: float = 0.0
+    # What the restaurant gives up per week: price revenue on existing sales, promo discounts,
+    # extra ad spend. Negative = a saving. Shown next to JET's gain so the trade-off is visible.
+    partner_cost_eur_per_week: float = 0.0
     formula: str = Field(default="", description="The heuristic used, shown in the UI.")
 
 
@@ -133,6 +136,8 @@ class GraphState(BaseModel):
     approvals: dict[str, bool] = Field(default_factory=dict)
     # recommendation id -> the owner's reason for rejecting it (feeds re-planning later).
     rejection_reasons: dict[str, str] = Field(default_factory=dict)
+    # Who decided (shown in the app, kept for the audit trail).
+    approver: str = ""
     applied: list[AppliedChange] = Field(default_factory=list)
     summary: Summary | None = None
     # Non-fatal problems (an agent or a patch failed). Appended to from parallel nodes.

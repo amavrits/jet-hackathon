@@ -13,3 +13,7 @@ filterwarnings = [
     "ignore:Pydantic serializer warnings:UserWarning",
     "ignore:Item 'summary' on TypedDict:UserWarning",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# The app adds the repo root to sys.path before importing `growth` (see the comment there).
+"app/main.py" = ["E402"]

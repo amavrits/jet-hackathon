@@ -1,0 +1,9 @@
+# Just Eat Takeaway.com colours, from the PIE design system global tokens (pie.design):
+# orange #F36805, charcoal-80 #242E30, truffle-5 #FDFDFB, truffle-10 #F6F3EF.
+[theme]
+base = "light"
+primaryColor = "#F36805"
+backgroundColor = "#FDFDFB"
+secondaryBackgroundColor = "#F6F3EF"
+textColor = "#242E30"
+font = "sans serif"

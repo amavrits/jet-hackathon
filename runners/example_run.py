@@ -77,11 +77,11 @@ def _card(r: Recommendation, n: int, hidden: list[Recommendation]) -> list[str]:
     return out
 
 
-def run(restaurant_id: str, out_path: Path, db_path: Path = q.DB_PATH) -> None:
+def run(restaurant_id: str, out_path: Path, db_path: Path | None = None) -> None:
     decision_spec = DECISIONS[restaurant_id]
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "jet.duckdb"
-        shutil.copy(db_path, db)
+        shutil.copy(db_path or q.db_path(), db)
         graph = build_graph(db)
         config = new_thread()
         md: list[str] = []

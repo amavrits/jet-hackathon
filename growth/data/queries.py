@@ -12,7 +12,13 @@ from typing import Any
 
 import duckdb
 
-DB_PATH = Path(os.environ.get("JET_DB_PATH", "data/jet.duckdb"))
+
+def db_path() -> Path:
+    """The project database, resolved at call time so JET_DB_PATH can change (tests, app)."""
+    return Path(os.environ.get("JET_DB_PATH", "data/jet.duckdb"))
+
+
+DB_PATH = db_path()  # import-time snapshot, kept for scripts; prefer db_path()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS restaurants (
@@ -144,9 +150,9 @@ CREATE TABLE IF NOT EXISTS change_log (
 """
 
 
-def connect(path: Path | str = DB_PATH, read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    """Open the single project database."""
-    return duckdb.connect(str(path), read_only=read_only)
+def connect(path: Path | str | None = None, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open the single project database (default: db_path())."""
+    return duckdb.connect(str(path or db_path()), read_only=read_only)
 
 
 def create_schema(con: duckdb.DuckDBPyConnection) -> None:
@@ -541,3 +547,28 @@ def competitor_prices_for_dish(
         """,
         [restaurant_id, dish_name],
     )
+
+
+def kpis(con: duckdb.DuckDBPyConnection, restaurant_id: str, weeks: int = 8) -> dict[str, float]:
+    """Headline numbers for the overview: volume, GMV, basket, rating."""
+    w = weekly_summary(con, restaurant_id, weeks)
+    avg_rating, n = con.execute(
+        "SELECT AVG(rating), COUNT(*) FROM reviews WHERE restaurant_id = ?", [restaurant_id]
+    ).fetchone()
+    return {
+        "orders_per_week": float(w["orders_per_week"] or 0),
+        "gmv_eur_per_week": float(w["gmv_eur_per_week"] or 0),
+        "avg_basket_eur": float(w["avg_basket_eur"] or 0),
+        "avg_rating": float(avg_rating or 0),
+        "review_count": int(n or 0),
+    }
+
+
+def orders_by_weekday(con: duckdb.DuckDBPyConnection, restaurant_id: str, weeks: int = 8) -> list[dict[str, Any]]:
+    """Average orders per week for each weekday (0 = Monday)."""
+    return [
+        {"weekday": d, "orders_per_week": sum(s["orders"] for s in slots) / weeks}
+        for d, slots in (
+            (d, [s for s in orders_by_slot(con, restaurant_id, weeks) if s["weekday"] == d]) for d in range(7)
+        )
+    ]

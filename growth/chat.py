@@ -417,7 +417,7 @@ def answer_for_thread(
     history: list[dict[str, Any]] | None = None,
     *,
     focus_id: str | None = None,
-    db_path: Any = q.DB_PATH,
+    db_path: Any = None,
     turn: Callable[..., Iterator[str | TurnResult]] | None = None,
 ) -> Iterator[ChatEvent]:
     """Convenience for the app: pull the restaurant and all cards (incl. variants) from a paused graph run.
@@ -426,7 +426,7 @@ def answer_for_thread(
     """
     values = graph.get_state(config).values
     cards = [r for recs in values["recommendations"].values() for r in recs]
-    con = q.connect(db_path)
+    con = q.connect(db_path or q.db_path())
     try:
         yield from answer(con, values["restaurant_id"], cards, question, history, focus_id=focus_id, turn=turn)
     finally:

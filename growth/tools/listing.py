@@ -113,3 +113,9 @@ def history(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[dict[str
     """Change log for a listing, newest first, with patches decoded."""
     rows = q.get_change_log(con, restaurant_id)
     return [{**r, "patch": json.loads(r["patch"]), "listing_before": json.loads(r["listing_before"])} for r in rows]
+
+
+def reset(con: duckdb.DuckDBPyConnection, restaurant_id: str) -> list[str]:
+    """Revert every active change to a listing (back to the original). Returns reverted ids."""
+    active = [h for h in history(con, restaurant_id) if h["reverted_at"] is None]
+    return revert(con, active[-1]["change_id"]) if active else []  # oldest active: reverts all after it

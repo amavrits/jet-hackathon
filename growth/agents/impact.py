@@ -24,12 +24,15 @@ INCREMENTAL_PEAK = 0.2  # share of sponsored orders that are truly incremental a
 INCREMENTAL_OFF_PEAK = 0.6  # ... and off-peak, where the restaurant isn't already busy
 
 
-def _impact(orders: float, gmv: float, commission: float, formula: str, ad_spend: float = 0.0) -> Impact:
+def _impact(
+    orders: float, gmv: float, commission: float, formula: str, ad_spend: float = 0.0, partner_cost: float = 0.0
+) -> Impact:
     return Impact(
         orders_per_week=round(orders, 1),
         gmv_eur_per_week=round(gmv, 2),
         jet_revenue_eur_per_week=round(gmv * commission + ad_spend, 2),
         ad_spend_eur=round(ad_spend, 2),
+        partner_cost_eur_per_week=round(partner_cost, 2),
         formula=formula,
     )
 
@@ -75,6 +78,7 @@ def _price_cut(f: dict[str, float]) -> Impact:
         f"{f['category_orders_per_week']:.0f} category orders/wk x {PRICE_ELASTICITY} elasticity x {cut:.0%} cut "
         f"= +{orders:.1f} orders x €{f['avg_basket_eur']:.2f} basket, minus {cut:.0%} on "
         f"€{f['changed_revenue_eur_per_week']:.0f}/wk existing sales, x {f['commission_rate']:.0%} commission",
+        partner_cost=lost_margin,
     )
 
 
@@ -91,6 +95,7 @@ def _slot_promo(f: dict[str, float]) -> Impact:
         f"gap {gap:.1f} orders/wk x {PROMO_GAP_CLOSED:.0%} recovered x €{f['avg_basket_eur']:.2f} basket "
         f"x {1 - d:.0%} after discount, minus {d:.0%} on {f['slot_orders_per_week']:.1f} existing slot orders, "
         f"x {f['commission_rate']:.0%} commission",
+        partner_cost=(f["slot_orders_per_week"] + orders) * f["avg_basket_eur"] * d,
     )
 
 
@@ -114,6 +119,7 @@ def _ad_daypart(f: dict[str, float]) -> Impact:
         f"new reach at {INCREMENTAL_OFF_PEAK:.0%}; x €{f['avg_basket_eur']:.2f} basket x "
         f"{f['commission_rate']:.0%} commission, plus €{spend:+.0f}/wk ad spend",
         ad_spend=spend,
+        partner_cost=spend,
     )
 
 

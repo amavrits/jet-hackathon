@@ -66,8 +66,10 @@ def _partner_actual_weeks(con: Any, rid: str) -> dict[Any, dict[str, float]]:
     return {w: {"orders": int(n), "gmv": float(g)} for w, n, g in rows}
 
 
-def build(db_path: Path | str = q.DB_PATH, truth_path: Path | str = TRUTH_PATH, verbose: bool = True) -> dict[str, int]:
-    db_path, truth_path = Path(db_path), Path(truth_path)
+def build(
+    db_path: Path | str | None = None, truth_path: Path | str = TRUTH_PATH, verbose: bool = True
+) -> dict[str, int]:
+    db_path, truth_path = Path(db_path or q.db_path()), Path(truth_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if db_path.exists():
         db_path.unlink()
@@ -148,7 +150,7 @@ def build(db_path: Path | str = q.DB_PATH, truth_path: Path | str = TRUTH_PATH, 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--db", default=str(q.DB_PATH))
+    ap.add_argument("--db", default=None)
     ap.add_argument("--truth", default=str(TRUTH_PATH))
     args = ap.parse_args()
     build(args.db, args.truth)

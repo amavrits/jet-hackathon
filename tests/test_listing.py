@@ -77,3 +77,13 @@ def test_revert_newest_then_older_reverts_everything_after(wcon):
     assert L.get_listing(wcon, RID) == original
     assert L.revert(wcon, c1.change_id) == []  # idempotent
     assert all(h["reverted_at"] is not None for h in L.history(wcon, RID))
+
+
+def test_reset_restores_original(wcon):
+    original = L.get_listing(wcon, RID)
+    a, b = list(original["menu"])[:2]
+    L.apply_patch(wcon, RID, "r1", [{"op": "replace", "path": f"/menu/{a}/price_eur", "value": 1.0}])
+    L.apply_patch(wcon, RID, "r2", [{"op": "replace", "path": f"/menu/{b}/price_eur", "value": 2.0}])
+    assert len(L.reset(wcon, RID)) == 2
+    assert L.get_listing(wcon, RID) == original
+    assert L.reset(wcon, RID) == []

@@ -143,7 +143,8 @@ def human_approval(state: GraphState) -> dict[str, Any]:
         }
     )
     approvals, reasons, errors = _parse_decision(decision, {r.id for r in state.ranked})
-    return {"approvals": approvals, "rejection_reasons": reasons, "errors": errors}
+    approver = str(decision.get("approver", "")) if isinstance(decision, dict) else ""
+    return {"approvals": approvals, "rejection_reasons": reasons, "approver": approver, "errors": errors}
 
 
 def _apply(con: duckdb.DuckDBPyConnection) -> Callable[[GraphState], dict[str, Any]]:
@@ -171,6 +172,7 @@ def summary_node(state: GraphState) -> dict[str, Any]:
         gmv_eur_per_week=round(sum(i.gmv_eur_per_week for i in impacts), 2),
         jet_revenue_eur_per_week=round(sum(i.jet_revenue_eur_per_week for i in impacts), 2),
         ad_spend_eur=round(sum(i.ad_spend_eur for i in impacts), 2),
+        partner_cost_eur_per_week=round(sum(i.partner_cost_eur_per_week for i in impacts), 2),
         formula="Sum of the approved recommendations' weekly impacts.",
     )
     scaled = round(total.jet_revenue_eur_per_week * SCALE_RESTAURANTS, 2)
@@ -197,14 +199,14 @@ def summary_node(state: GraphState) -> dict[str, Any]:
 # ------------------------------------------------------------------------- graph
 
 
-def build_graph(db_path: Path | str = q.DB_PATH, checkpointer: Any = None):
+def build_graph(db_path: Path | str | None = None, checkpointer: Any = None):
     """Compile the graph against one DuckDB file. Nodes use their own cursor, so parallel nodes are safe.
 
     The graph keeps a read-write connection open. DuckDB refuses a second connection to the same
     file with a different configuration in the same process, so anything else in the process
     (e.g. the Streamlit app) must also open it read-write: `queries.connect(path)`.
     """
-    con = q.connect(db_path)
+    con = q.connect(db_path or q.db_path())
     g = StateGraph(GraphState)
     g.add_node("load_context", _load_context(con))
     for name in SPECIALISTS:
